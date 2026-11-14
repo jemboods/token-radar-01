@@ -1,287 +1,280 @@
-'use strict';
-/* Token Radar dashboard. Everything on this page is rendered from
-   window.RADAR, the data.js the program writes beside this folder, so the
-   page, the board file and the screenshots always agree. Routes:
-   #/ board, #/live, #/model, #/protocol/<slug>, and the board accepts
-   ?q=&cat=&chain=&watch=1&sort=&dir= so a view can be linked exactly. */
+// app.js — the radar page: board, live list, model view and per-protocol
+// detail, all rendered from window.RADAR (the data.js the program writes).
+// Routes live in the hash: #/ board, #/live, #/model, #/protocol/<slug>;
+// board filters and sort ride along as #/?q=..&cat=..&chain=..&wl=1&sort=..
+// so any view can be linked — and screenshotted — deterministically.
 
-const R = window.RADAR;
-const $ = (s) => document.querySelector(s);
+(function () {
+  'use strict';
 
-function esc(s) {
-  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-function commas(n) {
-  const s = String(Math.trunc(Math.abs(n)));
-  let out = '';
-  for (let i = 0; i < s.length; i++) {
-    if (i > 0 && (s.length - i) % 3 === 0) out += ',';
-    out += s[i];
+  var R = window.RADAR;
+  var rows = R.rows;
+  var bySlug = {};
+  rows.forEach(function (r) { bySlug[r.slug] = r; });
+
+  function el(id) { return document.getElementById(id); }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
   }
-  return n < 0 ? '-' + out : out;
-}
-function money(n) {
-  if (n >= 1e9) return '$' + (n / 1e9).toFixed(2) + 'B';
-  if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
-  if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
-  return '$' + n;
-}
-function moneyFull(n) { return '$' + commas(n); }
-function fmtChg(x) { return (x > 0 ? '+' : '') + (Math.round(x * 100) / 100) + '%'; }
-function pct(x) {
-  if (x === null || x === undefined) return '<span class="dim">—</span>';
-  const cls = x > 0 ? 'pos' : x < 0 ? 'neg' : '';
-  return '<span class="' + cls + '">' + fmtChg(x) + '</span>';
-}
 
-/* The category multiples, recomputed here from the live protocols' own
-   market cap ÷ TVL ratios (trimmed to 0.005–20, median per category,
-   categories with fewer than 3 comps fall back to the global median) —
-   the same computation the program runs for the board. */
-function computeMultiples(live) {
-  const byCat = new Map();
-  const all = [];
-  for (const p of live) {
-    if (!p.tvl_usd || p.tvl_usd <= 0) continue;
-    const r = p.mcap_usd / p.tvl_usd;
-    if (r < 0.005 || r > 20) continue;
-    if (!byCat.has(p.category)) byCat.set(p.category, []);
-    byCat.get(p.category).push(r);
-    all.push(r);
+  function fmtUsd(v) {
+    if (v >= 1e9) return '$' + (v / 1e9).toFixed(2) + 'B';
+    if (v >= 1e6) return '$' + (v / 1e6).toFixed(1) + 'M';
+    if (v >= 1e3) return '$' + Math.round(v / 1e3) + 'K';
+    return '$' + v;
   }
-  const median = (xs) => {
-    const s = [...xs].sort((a, b) => a - b);
-    const m = Math.floor(s.length / 2);
-    return s.length % 2 === 1 ? s[m] : (s[m - 1] + s[m]) / 2;
-  };
-  const round4 = (x) => Math.round(x * 10000) / 10000;
-  const global = round4(median(all));
-  const cats = [...byCat.entries()].map(([category, xs]) => ({
-    category, multiple: round4(median(xs)), comps: xs.length, applied: xs.length >= 3,
-  }));
-  cats.sort((a, b) => b.comps - a.comps || (a.category < b.category ? -1 : 1));
-  return { global, cats };
-}
-function ageText(days) {
-  if (days === null) return '—';
-  if (days >= 730) return (days / 365).toFixed(1) + 'y';
-  if (days >= 60) return Math.round(days / 30.4) + 'mo';
-  return days + 'd';
-}
 
-/* ------------------------------------------------------------- routing */
-
-function parseHash() {
-  const h = location.hash.replace(/^#/, '') || '/';
-  const q = h.indexOf('?');
-  const path = q >= 0 ? h.slice(0, q) : h;
-  const params = new URLSearchParams(q >= 0 ? h.slice(q + 1) : '');
-  return { path, params };
-}
-
-function boardHash() {
-  const p = new URLSearchParams();
-  const q = $('#q').value.trim();
-  if (q) p.set('q', q);
-  if ($('#cat').value) p.set('cat', $('#cat').value);
-  if ($('#chain').value) p.set('chain', $('#chain').value);
-  if ($('#watch').checked) p.set('watch', '1');
-  if ($('#sort').value !== 'rank') p.set('sort', $('#sort').value);
-  const def = $('#sort').value === 'rank' ? 'asc' : 'desc';
-  if (state.dir !== def) p.set('dir', state.dir);
-  const s = p.toString();
-  return '#/' + (s ? '?' + s : '');
-}
-
-const state = { dir: 'asc' };
-
-function show(view) {
-  for (const v of ['board', 'live', 'model', 'detail']) {
-    $('#view-' + v).hidden = v !== view;
+  function fmtAge(days) {
+    if (days === null || days === undefined) return '—';
+    if (days >= 730) return (days / 365.25).toFixed(1) + 'y';
+    if (days >= 60) return Math.round(days / 30.44) + 'mo';
+    return days + 'd';
   }
-  document.querySelectorAll('.tabs button').forEach((b) => {
-    b.classList.toggle('on', b.dataset.view === view);
+
+  function fmtChange(c) {
+    if (c === null || c === undefined) return '<span class="sub">n/a</span>';
+    var cls = c >= 0 ? 'pos' : 'neg';
+    return '<span class="' + cls + '">' + (c >= 0 ? '+' : '') + c.toFixed(1) + '%</span>';
+  }
+
+  // -- header ---------------------------------------------------------------
+  el('st-scanned').textContent = R.stats.scanned;
+  el('st-ranked').textContent = R.stats.ranked;
+  el('st-watchlist').textContent = R.stats.watchlist + '/' + R.stats.watchlist;
+  el('st-live').textContent = R.stats.live;
+  el('st-total').textContent = fmtUsd(R.stats.total_implied_usd);
+  el('st-median').textContent = R.stats.global_multiple.toFixed(4) + 'x';
+  el('as-of').textContent = R.as_of;
+
+  // -- board state ------------------------------------------------------------
+  var state = { q: '', cat: '', chain: '', wl: false, sort: 'rank', dir: 1 };
+
+  function readBoardHash(params) {
+    state.q = params.get('q') || '';
+    state.cat = params.get('cat') || '';
+    state.chain = params.get('chain') || '';
+    state.wl = params.get('wl') === '1';
+    state.sort = params.get('sort') || 'rank';
+    state.dir = params.get('dir') === 'desc' ? -1 : 1;
+    el('q').value = state.q;
+    el('f-watchlist').checked = state.wl;
+  }
+
+  function syncHash() {
+    var p = new URLSearchParams();
+    if (state.q) p.set('q', state.q);
+    if (state.cat) p.set('cat', state.cat);
+    if (state.chain) p.set('chain', state.chain);
+    if (state.wl) p.set('wl', '1');
+    if (state.sort !== 'rank') p.set('sort', state.sort);
+    if (state.dir === -1) p.set('dir', 'desc');
+    var s = p.toString();
+    history.replaceState(null, '', '#/' + (s ? '?' + s : ''));
+  }
+
+  function filtered() {
+    var q = state.q.trim().toLowerCase();
+    var list = rows.filter(function (r) {
+      if (state.wl && !r.watchlist) return false;
+      if (state.cat && (r.category || 'Uncategorised') !== state.cat) return false;
+      if (state.chain && r.chains.indexOf(state.chain) === -1) return false;
+      if (q && r.name.toLowerCase().indexOf(q) === -1 && r.slug.indexOf(q) === -1) return false;
+      return true;
+    });
+    var key = state.sort;
+    var dir = state.dir;
+    var val = {
+      rank: function (r) { return r.rank; },
+      value: function (r) { return r.implied_value_usd; },
+      tvl: function (r) { return r.tvl_usd; },
+      change: function (r) { return r.change_7d === null ? -Infinity : r.change_7d; },
+      age: function (r) { return r.age_days === null ? -1 : r.age_days; },
+    }[key];
+    list.sort(function (a, b) { return (val(a) - val(b)) * dir || a.rank - b.rank; });
+    return list;
+  }
+
+  function renderBoard() {
+    var list = filtered();
+    el('row-count').textContent = list.length + ' of ' + rows.length + ' protocols';
+    el('board-body').innerHTML = list.map(function (r) {
+      return '<tr data-slug="' + esc(r.slug) + '">' +
+        '<td class="num">' + r.rank + '</td>' +
+        '<td class="name">' + esc(r.name) + (r.watchlist ? '<span class="badge">WATCHLIST</span>' : '') +
+        '<span class="sub">' + esc(r.slug) + '</span></td>' +
+        '<td>' + esc(r.category || 'Uncategorised') + '</td>' +
+        '<td class="num">' + fmtUsd(r.implied_value_usd) + '</td>' +
+        '<td class="num">' + fmtUsd(r.tvl_usd) + '</td>' +
+        '<td class="num">' + fmtChange(r.change_7d) + '</td>' +
+        '<td class="num">' + fmtAge(r.age_days) + '</td>' +
+        '<td class="num">' + r.multiple.toFixed(4) + 'x</td></tr>';
+    }).join('');
+  }
+
+  // -- live tab ---------------------------------------------------------------
+  function renderLive() {
+    el('live-body').innerHTML = R.live.map(function (p) {
+      return '<tr><td class="name">' + esc(p.name) + '<span class="sub">' + esc(p.slug) + '</span></td>' +
+        '<td>' + esc(p.symbol || '—') + '</td>' +
+        '<td>' + esc(p.category || 'Uncategorised') + '</td>' +
+        '<td class="num">' + fmtUsd(p.tvl_usd) + '</td>' +
+        '<td class="num">' + fmtUsd(p.mcap_usd) + '</td>' +
+        '<td class="num">' + (p.ratio === null ? '—' : p.ratio.toFixed(4) + 'x') + '</td></tr>';
+    }).join('');
+  }
+
+  // -- model tab: multiples recomputed here, from the live rows ---------------
+  function medianOf(values) {
+    var s = values.slice().sort(function (a, b) { return a - b; });
+    var mid = Math.floor(s.length / 2);
+    return s.length % 2 === 1 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+  }
+  function round4(x) { return Math.round(x * 10000) / 10000; }
+
+  function computeMultiples(liveRows) {
+    var all = [];
+    var buckets = {};
+    liveRows.forEach(function (p) {
+      if (p.mcap_usd === null || p.tvl_usd <= 0) return;
+      var ratio = p.mcap_usd / p.tvl_usd;
+      if (ratio < 0.005 || ratio > 20) return;
+      all.push(ratio);
+      var key = p.category || 'Uncategorised';
+      (buckets[key] = buckets[key] || []).push(ratio);
+    });
+    var table = Object.keys(buckets)
+      .filter(function (k) { return buckets[k].length >= 3; })
+      .map(function (k) { return { category: k, multiple: round4(medianOf(buckets[k])), comps: buckets[k].length }; })
+      .sort(function (a, b) { return b.multiple - a.multiple; });
+    return { global: round4(medianOf(all)), peers: all.length, table: table };
+  }
+
+  function renderModel() {
+    var made = computeMultiples(R.live);
+    el('multiples-body').innerHTML = made.table.map(function (m) {
+      return '<tr><td>' + esc(m.category) + '</td><td class="num">' + m.multiple.toFixed(4) + 'x</td><td class="num">' + m.comps + '</td></tr>';
+    }).join('');
+    el('global-note').textContent =
+      'Global median across ' + made.peers + ' live peers with a usable ratio: ' + made.global.toFixed(4) +
+      'x. Categories with fewer than 3 live peers are priced at this global median instead.';
+  }
+
+  // -- detail -------------------------------------------------------------------
+  function renderDetail(slug) {
+    var r = bySlug[slug];
+    if (!r) { el('detail').innerHTML = '<p class="lede">No protocol with that slug is on the board.</p>'; return; }
+    var plan = window.FARM.plan(r);
+    var arith = [
+      ['TVL (snapshot)', fmtUsd(r.tvl_usd)],
+      ['x category multiple (' + (r.category || 'Uncategorised') + ')', r.multiple.toFixed(4) + 'x'],
+      ['x growth (7d ' + (r.change_7d === null ? 'unreported' : r.change_7d.toFixed(1) + '%') + ')', r.growth.toFixed(4) + 'x'],
+      ['x seasoning (' + (r.age_days === null ? 'listing date unrecorded' : fmtAge(r.age_days) + ' with no token recorded') + ')', r.seasoning.toFixed(4) + 'x'],
+      ['x breadth (' + r.chains.length + (r.chains.length === 1 ? ' chain' : ' chains') + ')', r.breadth.toFixed(4) + 'x'],
+      ['= implied value', fmtUsd(r.implied_value_usd)],
+    ];
+    el('detail').innerHTML =
+      '<div class="detail-head"><h2>' + esc(r.name) + '</h2>' +
+      (r.watchlist ? '<span class="badge">WATCHLIST</span>' : '') +
+      '<span class="detail-meta">' + esc(r.category || 'Uncategorised') + ' &middot; ' + esc(r.chains.join(', ')) + '</span></div>' +
+      '<div class="cards">' +
+      '<div class="card"><span class="v">#' + r.rank + '</span><span class="k">board rank</span></div>' +
+      '<div class="card"><span class="v">' + fmtUsd(r.implied_value_usd) + '</span><span class="k">implied value</span></div>' +
+      '<div class="card"><span class="v">' + fmtUsd(r.tvl_usd) + '</span><span class="k">TVL</span></div>' +
+      '<div class="card"><span class="v">' + fmtChange(r.change_7d) + '</span><span class="k">TVL change, 7d</span></div>' +
+      '</div>' +
+      '<p class="why">' + esc(r.why) + '</p>' +
+      '<h2>The arithmetic</h2>' +
+      '<table class="arith">' + arith.map(function (row) { return '<tr><td>' + esc(row[0]) + '</td><td>' + esc(row[1]) + '</td></tr>'; }).join('') + '</table>' +
+      '<h2>How to farm it</h2>' +
+      '<ol class="plan">' + plan.map(function (s) { return '<li>' + esc(s) + '</li>'; }).join('') + '</ol>' +
+      '<p class="hint">DefiLlama records no token for ' + esc(r.name) + ' as of ' + R.as_of + '; a record is not proof that none exists. The plan is a starting point, not a promise of an airdrop.</p>';
+  }
+
+  // -- routing ------------------------------------------------------------------
+  var views = ['board', 'live', 'model', 'detail'];
+  function show(view) {
+    views.forEach(function (v) { el('view-' + v).hidden = v !== view; });
+    document.querySelectorAll('.tab').forEach(function (t) {
+      t.classList.toggle('active', t.getAttribute('data-nav') === view || (view === 'detail' && t.getAttribute('data-nav') === 'board'));
+    });
+    window.scrollTo(0, 0);
+  }
+
+  function route() {
+    var hash = location.hash.replace(/^#\/?/, '');
+    var parts = hash.split('?');
+    var path = parts[0] || '';
+    var params = new URLSearchParams(parts[1] || '');
+    if (path === 'live') { renderLive(); show('live'); return; }
+    if (path === 'model') { renderModel(); show('model'); return; }
+    if (path.indexOf('protocol/') === 0) { renderDetail(decodeURIComponent(path.slice('protocol/'.length))); show('detail'); return; }
+    readBoardHash(params);
+    if (el('f-category').options.length) el('f-category').value = state.cat;
+    if (el('f-chain').options.length) el('f-chain').value = state.chain;
+    renderBoard();
+    show('board');
+  }
+
+  // -- controls -------------------------------------------------------------------
+  function fillSelect(id, values, allLabel) {
+    var sel = el(id);
+    sel.innerHTML = '<option value="">' + allLabel + '</option>' + values.map(function (v) {
+      return '<option value="' + esc(v) + '">' + esc(v) + '</option>';
+    }).join('');
+  }
+  var cats = [];
+  var chains = [];
+  rows.forEach(function (r) {
+    var c = r.category || 'Uncategorised';
+    if (cats.indexOf(c) === -1) cats.push(c);
+    r.chains.forEach(function (ch) { if (chains.indexOf(ch) === -1) chains.push(ch); });
   });
-}
+  cats.sort(); chains.sort();
+  fillSelect('f-category', cats, 'All categories');
+  fillSelect('f-chain', chains, 'All chains');
 
-/* ------------------------------------------------------------- board */
-
-function filteredRows() {
-  const q = $('#q').value.trim().toLowerCase();
-  const cat = $('#cat').value;
-  const chain = $('#chain').value;
-  const watch = $('#watch').checked;
-  let rows = R.rows.filter((r) =>
-    (!q || r.name.toLowerCase().includes(q) || r.slug.includes(q)) &&
-    (!cat || r.category === cat) &&
-    (!chain || r.chains.includes(chain)) &&
-    (!watch || r.watchlist));
-  const key = { rank: 'rank', value: 'implied_value_usd', tvl: 'tvl_usd', chg: 'change_7d', age: 'age_days' }[$('#sort').value];
-  const mul = state.dir === 'asc' ? 1 : -1;
-  rows.sort((a, b) => {
-    const av = a[key], bv = b[key];
-    if (av === null && bv === null) return a.rank - b.rank;
-    if (av === null) return 1;
-    if (bv === null) return -1;
-    return (av - bv) * mul || a.rank - b.rank;
-  });
-  return rows;
-}
-
-function renderBoard() {
-  const rows = filteredRows();
-  const watchShown = rows.filter((r) => r.watchlist).length;
-  $('#count').textContent =
-    'Showing ' + rows.length + ' of ' + R.rows.length + ' ranked protocols · ' + watchShown +
-    ' watchlist · implied values in USD, from the model on the third tab';
-  $('#board tbody').innerHTML = rows.map((r) =>
-    '<tr data-slug="' + esc(r.slug) + '"' + (r.watchlist ? ' class="watch"' : '') + '>' +
-    '<td class="rank">' + r.rank + '</td>' +
-    '<td class="name">' + (r.watchlist ? '<span class="star">★</span> ' : '') + esc(r.name) +
-      '<span class="slug">' + esc(r.slug) + '</span></td>' +
-    '<td>' + esc(r.category) + '</td>' +
-    '<td>' + esc(r.chains.slice(0, 3).join(', ')) + (r.chains.length > 3 ? ' +' + (r.chains.length - 3) : '') + '</td>' +
-    '<td class="num">' + money(r.tvl_usd) + '</td>' +
-    '<td class="num">' + pct(r.change_7d) + '</td>' +
-    '<td>' + (r.listed_at || '—') + '</td>' +
-    '<td class="num">' + ageText(r.age_days) + '</td>' +
-    '<td class="num">' + money(r.implied_value_usd) + '</td>' +
-    '<td class="num">' + r.implied_multiple + '×</td></tr>'
-  ).join('');
-}
-
-/* ------------------------------------------------------------- live */
-
-function renderLive() {
-  $('#live tbody').innerHTML = R.live.slice(0, 60).map((r) =>
-    '<tr><td class="name">' + esc(r.name) + '<span class="slug">' + esc(r.slug) + '</span></td>' +
-    '<td>' + esc(r.symbol || '—') + '</td><td>' + esc(r.category) + '</td>' +
-    '<td class="num">' + money(r.tvl_usd) + '</td><td class="num">' + money(r.mcap_usd) + '</td>' +
-    '<td class="num">' + r.ratio + '×</td></tr>'
-  ).join('');
-}
-
-function renderModel() {
-  const m = computeMultiples(R.live);
-  $('#mults tbody').innerHTML = m.cats.map((c) =>
-    '<tr><td>' + esc(c.category) + '</td><td class="num">' + c.comps + '</td>' +
-    '<td class="num">' + c.multiple + '×</td>' +
-    '<td>' + (c.category === 'CEX' ? 'shown for evidence — exchanges are not ranked' : c.applied ? 'priced at this median' : 'too few — global median ' + m.global + '× applies') + '</td></tr>'
-  ).join('');
-}
-
-/* ------------------------------------------------------------- detail */
-
-function renderDetail(slug) {
-  const r = R.rows.find((x) => x.slug === slug);
-  if (!r) { location.hash = '#/'; return; }
-  const plan = window.farmSteps(r).map((s) =>
-    '<li>' + esc(s).replace(' Cost: ', '<br><b>Cost:</b> ').replace('. Time: ', ' &nbsp;<b>Time:</b> ') + '</li>'
-  ).join('');
-  $('#view-detail').innerHTML =
-    '<a class="back" href="#/">← Back to the board</a>' +
-    '<div class="detail-head"><h2>' + esc(r.name) + '</h2>' +
-    '<span class="slug">' + esc(r.slug) + '</span>' +
-    (r.watchlist ? '<span class="pill amber">★ watchlist</span>' : '') +
-    (r.tvl_usd >= R.floor_usd ? '<span class="pill">above the $50M curation floor</span>' : '<span class="pill">below the $50M floor — early</span>') +
-    '</div>' +
-    '<div class="dgrid">' +
-    '<div class="stat"><div class="v">#' + r.rank + '</div><div class="l">Rank of ' + R.rows.length + '</div></div>' +
-    '<div class="stat"><div class="v"><em>' + moneyFull(r.implied_value_usd) + '</em></div><div class="l">Implied token value</div></div>' +
-    '<div class="stat"><div class="v">' + moneyFull(r.tvl_usd) + '</div><div class="l">TVL in snapshot</div></div>' +
-    '<div class="stat"><div class="v">' + r.implied_multiple + '×</div><div class="l">Implied value ÷ TVL</div></div>' +
-    '</div>' +
-    '<h3>Why this rank</h3><p class="why">' + esc(r.why) + '</p>' +
-    '<h3>The arithmetic</h3><table class="break"><tbody>' +
-    '<tr><td>TVL</td><td class="num">' + moneyFull(r.tvl_usd) + '</td></tr>' +
-    '<tr><td>Category multiple</td><td class="num">× ' + r.multiple + (r.multiple_comps > 0 ? ' (median of ' + r.multiple_comps + ' live ' + esc(r.category) + ')' : ' (global median — too few live ' + esc(r.category) + ')') + '</td></tr>' +
-    '<tr><td>Growth</td><td class="num">× ' + r.growth_factor + (r.change_7d === null ? ' (no 7-day change recorded)' : ' (' + fmtChg(r.change_7d) + ' TVL in 7 days)') + '</td></tr>' +
-    '<tr><td>Seasoning</td><td class="num">× ' + r.seasoning_factor + (r.age_days === null ? ' (listing date unknown)' : ' (listed ' + r.listed_at + ', ' + commas(r.age_days) + ' days, no token recorded)') + '</td></tr>' +
-    '<tr><td>Breadth</td><td class="num">× ' + r.breadth_factor + ' (' + r.chains.length + ' chains: ' + esc(r.chains.join(', ')) + ')</td></tr>' +
-    '<tr><td>Implied value</td><td class="num"><b>' + moneyFull(r.implied_value_usd) + '</b></td></tr>' +
-    '</tbody></table>' +
-    '<h3>Farm plan — 7 steps</h3><ol class="plan">' + plan + '</ol>' +
-    '<p class="hint">The snapshot records no token for ' + esc(r.name) + ' — that is a statement about this data, not a promise that none exists or that one will launch. The plan builds a real usage history; nothing can guarantee a distribution.</p>';
-  show('detail');
-}
-
-/* ------------------------------------------------------------- init */
-
-function renderStats() {
-  const s = R.stats;
-  const cells = [
-    [String(s.scanned), 'protocols scanned'],
-    ['<em>' + s.ranked + '</em>', 'pre-token, ranked'],
-    ['<em>' + s.watchlist_covered + ' / ' + s.watchlist + '</em>', 'watchlist covered'],
-    [String(s.live_tokens), 'already trading'],
-    [money(s.total_implied_usd), 'total implied value'],
-    [s.global_median_multiple + '×', 'global median cap ÷ TVL'],
-  ];
-  $('#stats').innerHTML = cells.map((c) => '<div class="stat"><div class="v">' + c[0] + '</div><div class="l">' + c[1] + '</div></div>').join('');
-  $('#m-asof').textContent = R.as_of;
-  $('#source').textContent = 'Source: ' + R.source;
-}
-
-function applyBoardParams(params) {
-  $('#q').value = params.get('q') || '';
-  $('#cat').value = params.get('cat') || '';
-  $('#chain').value = params.get('chain') || '';
-  $('#watch').checked = params.get('watch') === '1';
-  $('#sort').value = params.get('sort') || 'rank';
-  state.dir = params.get('dir') || ($('#sort').value === 'rank' ? 'asc' : 'desc');
-  $('#dir').textContent = state.dir === 'asc' ? '↑' : '↓';
-}
-
-function route() {
-  if (!R) { document.body.innerHTML = '<p style="padding:32px">data.js is missing — run the program first.</p>'; return; }
-  const { path, params } = parseHash();
-  if (path.startsWith('/protocol/')) {
-    renderDetail(decodeURIComponent(path.slice('/protocol/'.length)));
-    return;
+  function controlChanged() {
+    state.q = el('q').value;
+    state.cat = el('f-category').value;
+    state.chain = el('f-chain').value;
+    state.wl = el('f-watchlist').checked;
+    syncHash();
+    renderBoard();
   }
-  if (path === '/live') { show('live'); renderLive(); return; }
-  if (path === '/model') { show('model'); renderModel(); return; }
-  show('board');
-  applyBoardParams(params);
-  renderBoard();
-}
-
-function init() {
-  const cats = [...new Set(R.rows.map((r) => r.category))].sort();
-  $('#cat').innerHTML = '<option value="">All categories</option>' + cats.map((c) => '<option>' + esc(c) + '</option>').join('');
-  const chains = [...new Set(R.rows.flatMap((r) => r.chains))].sort();
-  $('#chain').innerHTML = '<option value="">All chains</option>' + chains.map((c) => '<option>' + esc(c) + '</option>').join('');
-  renderStats();
-
-  const sync = () => { history.replaceState(null, '', boardHash()); renderBoard(); };
-  for (const id of ['#q', '#cat', '#chain', '#sort']) $(id).addEventListener('input', sync);
-  $('#watch').addEventListener('change', sync);
-  $('#dir').addEventListener('click', () => {
-    state.dir = state.dir === 'asc' ? 'desc' : 'asc';
-    $('#dir').textContent = state.dir === 'asc' ? '↑' : '↓';
-    sync();
+  ['q', 'f-category', 'f-chain', 'f-watchlist'].forEach(function (id) {
+    el(id).addEventListener('input', controlChanged);
+    el(id).addEventListener('change', controlChanged);
   });
-  document.querySelectorAll('#board thead th[data-k]').forEach((th) => {
-    th.addEventListener('click', () => {
-      const map = { rank: 'rank', tvl: 'tvl', chg: 'chg', age: 'age', value: 'value' };
-      const v = map[th.dataset.k];
-      if ($('#sort').value === v) state.dir = state.dir === 'asc' ? 'desc' : 'asc';
-      else { $('#sort').value = v; state.dir = v === 'rank' ? 'asc' : 'desc'; }
-      $('#dir').textContent = state.dir === 'asc' ? '↑' : '↓';
-      sync();
+
+  document.querySelectorAll('th.sortable').forEach(function (th) {
+    th.addEventListener('click', function () {
+      var key = th.getAttribute('data-sort');
+      if (state.sort === key) state.dir = -state.dir;
+      else { state.sort = key; state.dir = key === 'rank' ? 1 : -1; }
+      syncHash();
+      renderBoard();
     });
   });
-  $('#board tbody').addEventListener('click', (e) => {
-    const tr = e.target.closest('tr[data-slug]');
-    if (tr) location.hash = '#/protocol/' + encodeURIComponent(tr.dataset.slug);
+
+  el('board-body').addEventListener('click', function (ev) {
+    var tr = ev.target.closest('tr[data-slug]');
+    if (tr) location.hash = '#/protocol/' + encodeURIComponent(tr.getAttribute('data-slug'));
   });
-  document.querySelectorAll('.tabs button').forEach((b) => {
-    b.addEventListener('click', () => {
-      location.hash = b.dataset.view === 'board' ? '#/' : '#/' + b.dataset.view;
+
+  document.querySelectorAll('.tab').forEach(function (t) {
+    t.addEventListener('click', function () {
+      var nav = t.getAttribute('data-nav');
+      location.hash = nav === 'board' ? '#/' : '#/' + nav;
     });
   });
+
   window.addEventListener('hashchange', route);
   route();
-}
 
-init();
+  // Exposed for the entry's own build checks: the page's recomputation of
+  // the multiples must agree with the values the program published.
+  window.RADAR_APP = { computeMultiples: computeMultiples };
+})();

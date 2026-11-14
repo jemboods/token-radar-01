@@ -3,105 +3,106 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Token Radar — the pre-token board</title>
+<title>Token Launch Radar — pre-token protocols ranked by implied value</title>
+<link rel="icon" href="data:,">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<header class="top">
+<header class="masthead">
   <div class="brand">
-    <div class="mark">◎</div>
+    <div class="brand-mark" aria-hidden="true"></div>
     <div>
-      <h1>Token Radar</h1>
-      <p class="tag">DeFi protocols the snapshot records no token for — ranked by what a token would plausibly be worth, each with a farm plan.</p>
+      <h1>Token Launch Radar</h1>
+      <p class="tagline">Protocols that record no token yet, ranked by what a launch would be worth — and how to farm each one.</p>
     </div>
   </div>
-  <div class="meta">
-    <div><span class="k">Snapshot</span> <span id="m-asof">—</span></div>
-    <div><span class="k">Input</span> sealed file, read offline</div>
-    <div><span class="k">Runs</span> deterministic — same input, same board</div>
+  <div class="stats" id="stats">
+    <div class="stat"><span class="stat-num" id="st-scanned">–</span><span class="stat-label">protocols scanned</span></div>
+    <div class="stat"><span class="stat-num" id="st-ranked">–</span><span class="stat-label">pre-token ranked</span></div>
+    <div class="stat"><span class="stat-num" id="st-watchlist">–</span><span class="stat-label">watchlist covered</span></div>
+    <div class="stat"><span class="stat-num" id="st-live">–</span><span class="stat-label">already trading</span></div>
+    <div class="stat"><span class="stat-num" id="st-total">–</span><span class="stat-label">total implied value</span></div>
+    <div class="stat"><span class="stat-num" id="st-median">–</span><span class="stat-label">global cap/TVL median</span></div>
   </div>
 </header>
 
-<section class="stats" id="stats"></section>
-
-<nav class="tabs">
-  <button data-view="board" class="on">Board</button>
-  <button data-view="live">Already trading</button>
-  <button data-view="model">How the values are made</button>
+<nav class="tabs" aria-label="Views">
+  <button type="button" class="tab" data-nav="board">Board</button>
+  <button type="button" class="tab" data-nav="live">Already trading</button>
+  <button type="button" class="tab" data-nav="model">How the values are made</button>
 </nav>
 
 <main>
   <section id="view-board">
     <div class="controls">
-      <input id="q" type="search" placeholder="Search name or slug…">
-      <select id="cat"><option value="">All categories</option></select>
-      <select id="chain"><option value="">All chains</option></select>
-      <label class="chk"><input id="watch" type="checkbox"> Watchlist only ★</label>
-      <select id="sort">
-        <option value="rank">Sort: rank</option>
-        <option value="value">Sort: implied value</option>
-        <option value="tvl">Sort: TVL</option>
-        <option value="chg">Sort: 7d change</option>
-        <option value="age">Sort: age</option>
-      </select>
-      <button id="dir" title="Toggle sort direction">↓</button>
+      <input type="search" id="q" placeholder="Search name or slug" aria-label="Search protocols">
+      <select id="f-category" aria-label="Filter by category"></select>
+      <select id="f-chain" aria-label="Filter by chain"></select>
+      <label class="check"><input type="checkbox" id="f-watchlist"> Watchlist only</label>
+      <span class="count" id="row-count"></span>
     </div>
-    <p class="count" id="count"></p>
-    <div class="scroll">
-      <table id="board">
-        <thead><tr>
-          <th data-k="rank">#</th><th>Protocol</th><th>Category</th><th>Chains</th>
-          <th data-k="tvl" class="num">TVL</th><th data-k="chg" class="num">7d</th>
-          <th>Listed</th><th data-k="age" class="num">Age</th>
-          <th data-k="value" class="num">Implied value</th><th class="num">× TVL</th>
-        </tr></thead>
-        <tbody></tbody>
+    <div class="table-wrap">
+      <table class="board">
+        <thead>
+          <tr>
+            <th data-sort="rank" class="sortable">Rank</th>
+            <th>Protocol</th>
+            <th>Category</th>
+            <th data-sort="value" class="sortable num">Implied value</th>
+            <th data-sort="tvl" class="sortable num">TVL</th>
+            <th data-sort="change" class="sortable num">7d</th>
+            <th data-sort="age" class="sortable num">Age</th>
+            <th class="num">Multiple</th>
+          </tr>
+        </thead>
+        <tbody id="board-body"></tbody>
       </table>
     </div>
-    <p class="hint">Select any row for the full breakdown and its farm plan. ★ marks the curated watchlist: every watchlist protocol is on this board.</p>
+    <p class="hint">Select a row for the protocol's detail: the full arithmetic and its seven-step farm plan.</p>
   </section>
 
   <section id="view-live" hidden>
-    <p class="lede">These protocols already trade, so the board does not rank them. They are the evidence the values come from: each one's market cap divided by its TVL is a multiple, and the pre-token board is priced from the median multiple of each category below. Richest first, top 60.</p>
-    <div class="scroll">
-      <table id="live">
-        <thead><tr><th>Protocol</th><th>Symbol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">Cap / TVL</th></tr></thead>
-        <tbody></tbody>
+    <p class="lede">These protocols already trade: the snapshot records a market cap for each. They are not on the board. They are the evidence the board's values rest on — each category's multiple is the median cap/TVL of its live protocols listed here.</p>
+    <div class="table-wrap">
+      <table class="board">
+        <thead>
+          <tr><th>Protocol</th><th>Symbol</th><th>Category</th><th class="num">TVL</th><th class="num">Market cap</th><th class="num">Cap / TVL</th></tr>
+        </thead>
+        <tbody id="live-body"></tbody>
       </table>
     </div>
   </section>
 
   <section id="view-model" hidden>
-    <h2>The value model</h2>
-    <p class="formula">implied value = TVL × category multiple × growth × seasoning × breadth</p>
-    <div class="cards">
-      <div class="card"><h3>Category multiple</h3><p>The median market cap ÷ TVL of the live protocols in the same category, ratios trimmed to 0.005–20 first. Multiples cluster by business model — liquid staking trades near 0.04×, bridges near 0.56× — so a flat rate would misprice almost everything. A category with fewer than 3 live protocols falls back to the global median.</p></div>
-      <div class="card"><h3>Growth</h3><p>1 + 0.45 × tanh(7-day TVL change ÷ 30). A rising protocol is worth a premium; tanh keeps one hot week from overwhelming the base. No recorded change means ×1.</p></div>
-      <div class="card"><h3>Seasoning</h3><p>0.75 rising to 1.20 over two years listed with no token recorded. Longevity is the brief's own signal: a protocol that has run for years tokenless has users a token can be distributed to. No listing date means a flat ×0.90 — unknown is not young.</p></div>
-      <div class="card"><h3>Breadth</h3><p>+4% per extra chain beyond the first, capped at five. More chains means more users on the day a token exists.</p></div>
-    </div>
-    <h3>Category multiples, from this snapshot's live protocols</h3>
-    <div class="scroll">
-      <table id="mults">
-        <thead><tr><th>Category</th><th class="num">Live comps</th><th class="num">Median cap / TVL</th><th>Used for</th></tr></thead>
-        <tbody></tbody>
+    <h2>How the values are made</h2>
+    <p class="lede">Every implied value is one multiplication, and every ingredient comes from the snapshot itself — no name is priced by hand:</p>
+    <p class="formula">implied value = TVL &times; category multiple &times; growth &times; seasoning &times; breadth</p>
+    <ul class="factors">
+      <li><strong>Category multiple.</strong> The median market-cap/TVL of the live protocols in the same category, ratios trimmed to [0.005, 20]. A category needs at least 3 live peers to earn its own multiple; otherwise the global median is used. Live multiples run from about 0.04x for liquid staking to about 1.13x for canonical bridges, so one flat multiple would misprice nearly everything.</li>
+      <li><strong>Growth.</strong> 1 + 0.45 &middot; tanh(7-day TVL change / 30): a protocol growing into its launch is worth more than a shrinking one; unreported change counts as neutral.</li>
+      <li><strong>Seasoning.</strong> 0.75 + 0.45 &middot; min(age, 2 years) / 2 years: the longer a protocol has run with no token recorded, the more a launch has had time to become due. An unrecorded listing date counts as a flat 0.90.</li>
+      <li><strong>Breadth.</strong> 1 + 0.04 per extra chain, up to five: a protocol already working on several chains launches to a wider base.</li>
+    </ul>
+    <p class="lede">Each factor is rounded to 4 decimal places before it is applied, so the arithmetic on every detail page reproduces its board value exactly. The table below is recomputed by this page, in your browser, from the live protocols' own figures — it is not typed in.</p>
+    <div class="table-wrap">
+      <table class="board">
+        <thead>
+          <tr><th>Category</th><th class="num">Median cap / TVL</th><th class="num">Live peers</th></tr>
+        </thead>
+        <tbody id="multiples-body"></tbody>
       </table>
     </div>
-    <h3>What this board is honest about</h3>
-    <ul class="notes">
-      <li>“No token recorded” describes this snapshot, not the world: a protocol may have a token the data does not show, and nothing here claims otherwise.</li>
-      <li>Implied values are estimates built only from the snapshot's own figures — TVL, 7-day change, listing date, chains. No prices, no social signals, no outside data.</li>
-      <li>Centralised exchanges and versioned deployments (a “V2” of a listed protocol) are not ranked: an exchange's value is its off-chain business, and a version is not a separate future token.</li>
-      <li>A farm plan earns a genuine usage history. No plan can promise an airdrop, and none here does.</li>
-    </ul>
+    <p class="hint" id="global-note"></p>
   </section>
 
-  <section id="view-detail" hidden></section>
+  <section id="view-detail" hidden>
+    <p><a href="#/" class="back">&larr; Back to the board</a></p>
+    <div id="detail"></div>
+  </section>
 </main>
 
 <footer>
-  <div id="source"></div>
-  <div>Built from one sealed snapshot, offline. Implied values are model estimates, not prices or investment advice.</div>
+  <p>Implied values are this dashboard's own model output: what a token would be worth if the protocol's record stayed as it is. They are not a prediction that a token will be issued, or when. The snapshot (DefiLlama, as of <span id="as-of">–</span>) records no token for the board's protocols — a record is not proof that none exists. Farm plans are starting points, not advice; nothing here guarantees an airdrop.</p>
 </footer>
 
 <script src="../data.js"></script>
